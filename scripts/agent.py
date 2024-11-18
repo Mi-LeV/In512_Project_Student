@@ -107,7 +107,7 @@ class Agent:
             if cell_value == key_or_chest:
                 id_owner = get_item_owner() 
                 if not id_owner == self_id:
-                    broadcast_key_chest_pos()
+                    broadcast_key_chest_pos() #kfeosfjsdifhisfjhsdjfksdflkfhds
 
     def compute_move(self):
         """

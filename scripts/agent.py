@@ -109,6 +109,32 @@ class Agent:
                 if not id_owner == self_id:
                     broadcast_key_chest_pos()
 
+    def compute_move(self):
+        """
+        Computes the next move for the agent based on its current state.
+        :return: Coordinates (x, y) for the next move.
+        """
+        if self.got_key:
+            if self.in_descent_chest():
+                self.do_descent_chest()
+            else:
+                if self.chest_pos_received():
+                    return self.move_to_chest()
+                else:
+                    return self.explore(self.known_map)
+        else:
+            if self.in_descent_key():
+                self.do_descent_key()
+            else:
+                if self.key_pos_received():
+                    return self.move_to_key()
+                else:
+                    return self.explore(self.known_map)
+
+        # Default to staying in the current position if no move is computed
+        return self.x, self.y
+
+
 
 
 if __name__ == "__main__":

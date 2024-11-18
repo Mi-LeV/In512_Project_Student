@@ -92,7 +92,7 @@ class Server:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-i", "--ip_server", help="Ip address of the server", type=str, default="localhost")
-    parser.add_argument("-nb", "--nb_agents", help="Number of agents: 1, 2, 3 or 4", type=int, default=3)
+    parser.add_argument("-nb", "--nb_agents", help="Number of agents: 1, 2, 3 or 4", type=int, default=2)
     parser.add_argument("-mi", "--map_id", help="Map to load: 1 or 2 or 3", type=int, default=3)
 
 

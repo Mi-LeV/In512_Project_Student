@@ -90,7 +90,9 @@ class Agent:
                 check_conn_agent = False
 
     def move(self,x,y):
+        cmds = {"header": int(input("0 <-> Broadcast msg\n1 <-> Get data\n2 <-> Move\n3 <-> Get nb connected agents\n4 <-> Get nb agents\n5 <-> Get item owner\n"))}
         cmds["direction"] = int(input("0 <-> Stand\n1 <-> Left\n2 <-> Right\n3 <-> Up\n4 <-> Down\n5 <-> UL\n6 <-> UR\n7 <-> DL\n8 <-> DR\n"))
+        agent.network.send(cmds)
                   
     def main_loop(self):
         while True:

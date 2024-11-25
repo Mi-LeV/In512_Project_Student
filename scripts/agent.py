@@ -28,7 +28,7 @@ class Agent:
         self.items_collected = []     # Track the items found
 
 
-     
+        self.robots_map = {}
 
         #DO NOT TOUCH THE FOLLOWING INSTRUCTIONS
         self.network = Network(server_ip=server_ip)
@@ -46,6 +46,18 @@ class Agent:
         Thread(target=self.msg_cb, daemon=True).start()
         print("hello")
         self.wait_for_connected_agent()
+
+        
+        self.cell_val = 0.0
+        self.cell_owner = -1
+        self.cell_type = -1
+        self.known_map = np.zeros((self.w, self.h))
+        self.key_map = []
+        self.box_map = []
+        self.got_key = False
+        self.in_descent = False
+        self.descent_pos = []
+        self.last_descent_move = 1,1
         
 
 
@@ -60,6 +72,8 @@ class Agent:
             # Handling different message types
             if msg["header"] == MOVE:
                 self.x, self.y = msg["x"], msg["y"]
+                self.cell_val = msg["cell_val"]
+                self.known_map[self.x,self.y] = 1.0
                 print(f"Agent bouge a la position: ({self.x}, {self.y})")
                 
             elif msg["header"] == GET_NB_AGENTS:
@@ -70,15 +84,28 @@ class Agent:
                 
             elif msg["header"] == GET_DATA:
                 print(f"Valeur de cellule recu: {msg['cell_val']}")
+            
+            elif msg["header"] == GET_ITEM_OWNER:
+                self.cell_owner = msg['owner']
+                self.cell_type = msg['type']
+                type_obj = "Cle" if msg['type'] == KEY_TYPE else "Box"
+                print(f"Valeur de cellule recu: {msg['owner']} , " + type_obj)
+            
                 
             # Handle item discovery
             if msg["header"] == BROADCAST_MSG:
-                if msg["Msg type"] == 1:  # Key discovered
+                if msg["Msg type"] == KEY_DISCOVERED:  # Key discovered
                     print(f"Agent {self.agent_id} cle trouvee!")
-                    self.key_found = True
-                elif msg["Msg type"] == 2:  # Box discovered
+                    self.key_map += {"owner":msg["owner"], "position" : msg["position"]}
+                elif msg["Msg type"] == BOX_DISCOVERED:  # Box discovered
                     print(f"Agent {self.agent_id} boite trouvee!")
-                    self.box_found = True
+                    self.box_map += {"owner":msg["owner"], "position" : msg["position"]}
+
+                elif msg["Msg type"] == POSITION:
+                    self.robots_map[msg["owner"]] = msg["position"]
+                    x,y = msg["position"]
+                    self.known_map[int(x),int(y)] = 1.0
+                    
             
 
     def wait_for_connected_agent(self):
@@ -90,26 +117,171 @@ class Agent:
                 check_conn_agent = False
 
     def move(self,x,y):
-        cmds = {"header": int(input("0 <-> Broadcast msg\n1 <-> Get data\n2 <-> Move\n3 <-> Get nb connected agents\n4 <-> Get nb agents\n5 <-> Get item owner\n"))}
-        cmds["direction"] = int(input("0 <-> Stand\n1 <-> Left\n2 <-> Right\n3 <-> Up\n4 <-> Down\n5 <-> UL\n6 <-> UR\n7 <-> DL\n8 <-> DR\n"))
-        agent.network.send(cmds)
+        """
+        Sends the move command to the server to go to the given offset (x,y)
+
+            Parameters:
+                    x (int): x offset
+                    b (int): y offset
+
+        """
+        command = {"header": 2}
+
+
+        heading = 0
+
+        if x == -1 and y == 0:
+            heading = 1
+        elif x == 1 and y == 0:
+            heading = 2
+        elif x == 0 and y == -1:
+            heading = 3
+        elif x == 0 and y == 1:
+            heading = 4
+        elif x == -1 and y == -1:
+            heading = 5
+        elif x == 1 and y == -1:
+            heading = 6
+        elif x == -1 and y == 1:
+            heading = 7
+        elif x == 1 and y == 1:
+            heading = 8
+
+        if x + self.x < 0 or x + self.x >= self.w or y + self.y < 0 or y + self.y >= self.h : # out of bounds
+            heading = 0
+            print("hitting the wall")
+            
+        command["direction"] = heading
+        self.network.send(command)
+
+        if not heading == 0:
+            print("move success")
+
+    def broadcast_new_pos(self,x,y):
+        """
+        Broadcast the new position of the robot (x,y) with the agent ID.
+
+            Parameters:
+                    x (int): new x position
+                    b (int): new y position
+
+        """
+        command = {"header": BROADCAST_MSG}
+        command["Msg type"] = POSITION
+        command["position"] = (x, y)
+        command["owner"] = self.agent_id
+
+        self.network.send(command)
+
+    def get_item_owner_type(self):
+        command = {"header": GET_ITEM_OWNER}
+        self.network.send(command)
+
+        sleep(0.1) # timeout to be sure the callback has been done
+
+        return (self.cell_owner, self.cell_type)
+
+    def broadcast_obj_pos(self, cell_owner, obj_type):
+        command = {"header": BROADCAST_MSG}
+        if obj_type == KEY_TYPE:
+            command["Msg type"] = KEY_DISCOVERED
+        else:
+            command["Msg type"] = BOX_DISCOVERED
+
+        command["position"] = (self.x, self.y)
+        command["owner"] = cell_owner
+
+        self.network.send(command)
+
                   
     def main_loop(self):
         while True:
-            x,y = 0,0
-            #x,y = self.compute_move(known_map) # position of next move
-            if [x,y] in self.robots_map:
-                x,y = self.x, self.y
-                self.move(x,y)
-                continue
-            else:
-                move(x,y)
-            broadcast_new_pos(x,y)
+            #x,y = 0,0
+            x,y = self.compute_move() # position of next move
 
-            if cell_value == key_or_chest:
-                id_owner = get_item_owner() 
-                if not id_owner == self_id:
-                    broadcast_key_chest_pos() #kfeosfjsdifhisfjhsdjfksdflkfhds
+            for key, (robot_x, robot_y) in self.robots_map.items():
+                if robot_x == self.x and robot_y == self.y:  # if blocked by other bots
+                    print("avoiding collision")
+                    continue # do not move
+
+            self.move(x,y) # move to new pos
+            self.broadcast_new_pos(x,y) # broadcast new pos to others
+
+            sleep(0.1) # timeout to be sure the callback has been done
+
+            if self.cell_val == 1: # on a key or a chest
+                cell_owner,obj_type = self.get_item_owner_type() # request object type and owner
+                
+                if not cell_owner == self.agent_id: # object not for this robot
+                    self.broadcast_obj_pos(cell_owner,obj_type)
+                
+                print("GOT OBJECT")
+
+    def compute_gradient(self, points):
+        gradients = []
+        for i in range(len(points) - 1):
+            x1, y1, v1 = points[i]
+            x2, y2, v2 = points[i + 1]
+            dx = x2 - x1
+            dy = y2 - y1
+            if dx != 0:
+                grad_x = (v2 - v1) / dx
+            else:
+                grad_x = 0
+            if dy != 0:
+                grad_y = (v2 - v1) / dy
+            else:
+                grad_y = 0
+            gradients.append((grad_x, grad_y))
+        # Average gradients
+        grad_x_avg = np.mean([g[0] for g in gradients])
+        grad_y_avg = np.mean([g[1] for g in gradients])
+        return grad_x_avg, grad_y_avg
+
+    def do_descent(self, obj_type):
+        self.descent_pos.append((self.x, self.y,self.cell_val))
+        if len(self.descent_pos) > 1:
+            grad_x, grad_y = self.compute_gradient(self.descent_pos)
+            if grad_x == 0 and grad_y == 0:
+                heading = np.tan(self.last_descent_move[0:1]) + np.radians(90)
+                x,y = float(np.round(np.cos(heading))), float(np.round(np.sin(heading)))
+            else:
+                heading = np.arctan2(grad_y, grad_x)
+                x,y = round(np.cos(heading)), round(np.sin(heading))
+                self.last_descent_move = x,y
+        else:
+            if x + self.x < 0 or x + self.x >= self.w : # out of bounds
+                x = 0
+            else:
+                x = randint(-1,1)
+            
+            if y + self.y < 0 or y + self.y >= self.h:
+                y = 0
+            else:
+                y = randint(-1,1)
+
+        print("descent ", "Cle" if obj_type== KEY_TYPE else "Box")
+        
+
+        if self.cell_val == 1: # on a key or a chest
+            self.in_descent = False
+            self.descent_pos = []
+            x,y = 0,0
+        return (x,y)
+    
+    def move_to(self, obj_type):
+        print("move to ", obj_type)
+        x,y = randint(-1,1),randint(-1,1)
+        return (x,y)
+
+    def explore(self):
+        print("explore")
+        x,y = randint(-1,1),randint(-1,1)
+        if not self.cell_val == 0:
+            self.in_descent = True
+            self.descent_pos.append((self.x, self.y,self.cell_val))
+        return (x,y)
+
 
     def compute_move(self):
         """
@@ -117,25 +289,24 @@ class Agent:
         :return: Coordinates (x, y) for the next move.
         """
         if self.got_key:
-            if self.in_descent_chest():
-                self.do_descent_chest()
+            if self.in_descent:
+                return self.do_descent(BOX_TYPE)
             else:
-                if self.chest_pos_received():
-                    return self.move_to_chest()
+                if self.agent_id in [box["owner"] for box in self.box_map]: # our box has been broadcasted
+                    return self.move_to(BOX_TYPE)
                 else:
-                    return self.explore(self.known_map)
+                    return self.explore()
         else:
-            if self.in_descent_key():
-                self.do_descent_key()
+            if self.in_descent:
+                return self.do_descent(KEY_TYPE)
             else:
-                if self.key_pos_received():
-                    return self.move_to_key()
+                if self.agent_id in [key["owner"] for key in self.key_map]: # our box has been broadcasted
+                    return self.move_to(KEY_TYPE)
                 else:
-                    return self.explore(self.known_map)
+                    return self.explore()
 
         # Default to staying in the current position if no move is computed
-        return self.x, self.y
-
+        return 0, 0
 
 
 

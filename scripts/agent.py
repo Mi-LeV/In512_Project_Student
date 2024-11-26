@@ -59,6 +59,7 @@ class Agent:
         self.last_descent_move = 1,1
         self.descent_cooldown = 0
         
+        self.map_portion = np.ones((self.w, self.h))
 
 
         
@@ -78,6 +79,7 @@ class Agent:
                 
             elif msg["header"] == GET_NB_AGENTS:
                 self.nb_agent_expected = msg["nb_agents"]
+                self.init_map_portion()
                 
             elif msg["header"] == GET_NB_CONNECTED_AGENTS:
                 self.nb_agent_connected = msg["nb_connected_agents"]
@@ -96,9 +98,13 @@ class Agent:
             if msg["header"] == BROADCAST_MSG:
                 if msg["Msg type"] == KEY_DISCOVERED:  # Key discovered
                     print(f"Agent {self.agent_id} cle trouvee!")
+
+                    self.update_map_portion(msg["position"])
                     self.key_map += {"owner":msg["owner"], "position" : msg["position"]}
                 elif msg["Msg type"] == BOX_DISCOVERED:  # Box discovered
                     print(f"Agent {self.agent_id} boite trouvee!")
+
+                    self.update_map_portion(msg["position"])
                     self.box_map += {"owner":msg["owner"], "position" : msg["position"]}
 
                 elif msg["Msg type"] == POSITION:
@@ -156,6 +162,8 @@ class Agent:
 
         if not heading == 0:
             print("move success")
+    
+
 
     def broadcast_new_pos(self,x,y):
         """
@@ -207,7 +215,7 @@ class Agent:
             self.move(x,y) # move to new pos
             self.broadcast_new_pos(x,y) # broadcast new pos to others
 
-            sleep(0.1) # timeout to be sure the callback has been done
+            sleep(0.2) # timeout to be sure the callback has been done
 
             if self.cell_val == 1: # on a key or a chest
                 cell_owner,obj_type = self.get_item_owner_type() # request object type and owner
@@ -298,8 +306,24 @@ class Agent:
 
         return (x,y)
 
+    def init_map_portion(self):
+        self.map_portion = np.zeros((self.h, self.w))
+
+        region_width = self.w // self.nb_agent_expected
+
+        # Compute the start and end columns for the specified region
+        start_col = self.agent_id * region_width
+        end_col = (self.agent_id + 1)  * region_width + 1
+
+        self.map_portion[:, start_col:end_col] = 1
+
+    def update_map_portion(self,obj_pos):
+        x,y = obj_pos
+        self.map_portion[x-2:x+3, y-2:y+3] = 0
+        
+
     def explore(self):
-        print("explore")
+        print("Explore")
         x,y = randint(-1,1),randint(-1,1)
         if not self.cell_val == 0 and self.descent_cooldown <= 0:
             self.in_descent = True
@@ -315,25 +339,11 @@ class Agent:
         Computes the next move for the agent based on its current state.
         :return: Coordinates (x, y) for the next move.
         """
-        if self.key_found:
-            if self.box_found:
-                return 0, 0
-            if self.in_descent:
-                return self.do_descent(BOX_TYPE)
-            else:
-                if self.agent_id in [box["owner"] for box in self.box_map]: # our box has been broadcasted
-                    return self.move_to(BOX_TYPE)
-                else:
-                    return self.explore()
+        
+        if self.last_map_portion != self.map_portion:
+            self.update_optimal_path()
         else:
-            if self.in_descent:
-                return self.do_descent(KEY_TYPE)
-            else:
-                if self.agent_id in [key["owner"] for key in self.key_map]: # our box has been broadcasted
-                    return self.move_to(KEY_TYPE)
-                else:
-                    return self.explore()
-
+            self.cell_val ==
         # Default to staying in the current position if no move is computed
         return 0, 0
 

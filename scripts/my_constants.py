@@ -30,6 +30,7 @@ KEY_DISCOVERED = 1  #inform other agents that you discovered a key
 BOX_DISCOVERED = 2
 COMPLETED = 3   #inform other agents that you discovered your key and you reached your own box
 POSITION = 4   #inform other agents about your position
+EXPLORE_ZONE = 4   #inform other agents about your zone
 
 """ GAME """
 GAME_ID = -1    #id of the game when it sends a message to an agent

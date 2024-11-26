@@ -54,10 +54,10 @@ class Agent:
         self.known_map = np.zeros((self.w, self.h))
         self.key_map = []
         self.box_map = []
-        self.got_key = False
         self.in_descent = False
         self.descent_pos = []
         self.last_descent_move = 1,1
+        self.descent_cooldown = 0
         
 
 
@@ -214,6 +214,12 @@ class Agent:
                 
                 if not cell_owner == self.agent_id: # object not for this robot
                     self.broadcast_obj_pos(cell_owner,obj_type)
+                else:
+                    if obj_type == KEY_TYPE:
+                        self.key_found = True
+                    else:
+                        self.box_found = True
+
                 
                 print("GOT OBJECT")
 
@@ -242,7 +248,7 @@ class Agent:
         self.descent_pos.append((self.x, self.y,self.cell_val))
         if len(self.descent_pos) > 1:
             grad_x, grad_y = self.compute_gradient(self.descent_pos)
-            if grad_x == 0 and grad_y == 0:
+            if grad_x == 0 and grad_y == 0: # la direction est orthogonale au gradient
                 heading = np.tan(self.last_descent_move[0:1]) + np.radians(90)
                 x,y = float(np.round(np.cos(heading))), float(np.round(np.sin(heading)))
             else:
@@ -260,26 +266,47 @@ class Agent:
             else:
                 y = randint(-1,1)
 
-        print("descent ", "Cle" if obj_type== KEY_TYPE else "Box")
+        print("Descent", "Cle" if obj_type== KEY_TYPE else "Box")
         
 
         if self.cell_val == 1: # on a key or a chest
-            self.in_descent = False
+            self.in_descent = False # stop descent
+            self.descent_cooldown = 20
             self.descent_pos = []
-            x,y = 0,0
+            x,y = 0,0 # do not move
         return (x,y)
     
     def move_to(self, obj_type):
+        """
+        Move to an object that has been sent via broadcast ( coordinates are known )
+        Returns """
         print("move to ", obj_type)
-        x,y = randint(-1,1),randint(-1,1)
+        if obj_type == KEY_TYPE:
+            obj_map = self.key_map
+        else:
+            obj_map = self.box_map
+
+        if len(obj_map) > 1:
+            obj_pos = obj_map[0]["position"]
+        else:
+            return (0,0)
+        
+        offset_x,offset_y = obj_pos[0] - self.x, obj_pos[1] - self.y
+
+        heading = np.arctan2(offset_y, offset_x) # normalize vector to 1 for movement
+        x,y = round(np.cos(heading)), round(np.sin(heading))
+
         return (x,y)
 
     def explore(self):
         print("explore")
         x,y = randint(-1,1),randint(-1,1)
-        if not self.cell_val == 0:
+        if not self.cell_val == 0 and self.descent_cooldown <= 0:
             self.in_descent = True
             self.descent_pos.append((self.x, self.y,self.cell_val))
+        else:
+            self.descent_cooldown -= 1
+        
         return (x,y)
 
 
@@ -288,7 +315,9 @@ class Agent:
         Computes the next move for the agent based on its current state.
         :return: Coordinates (x, y) for the next move.
         """
-        if self.got_key:
+        if self.key_found:
+            if self.box_found:
+                return 0, 0
             if self.in_descent:
                 return self.do_descent(BOX_TYPE)
             else:

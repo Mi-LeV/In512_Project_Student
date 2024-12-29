@@ -27,6 +27,8 @@ class Agent:
         self.box_found = False        # Whether the agent found the box
         self.items_collected = []     # Track the items found
 
+        self.portion_init = False
+
 
         self.robots_map = {}
 
@@ -37,14 +39,12 @@ class Agent:
         self.network.send({"header": GET_DATA})
         self.msg = {}
         env_conf = self.network.receive()
-        self.nb_agent_expected = 0
-        self.nb_agent_connected = 0
+        self.nb_agents_expected = 10
+        self.nb_agents_connected = 0
         self.x, self.y = env_conf["x"], env_conf["y"]   #initial agent position
         self.w, self.h = env_conf["w"], env_conf["h"]   #environment dimensions
-        cell_val = env_conf["cell_val"] #value of the cell the agent is located in
-        print(cell_val)
+
         Thread(target=self.msg_cb, daemon=True).start()
-        print("hello")
         self.wait_for_connected_agent()
 
         
@@ -58,8 +58,9 @@ class Agent:
         self.descent_pos = []
         self.last_descent_move = 1,1
         self.descent_cooldown = 0
+        self.in_explore = True
         
-        self.map_portion = np.ones((self.w, self.h))
+        
 
 
         
@@ -78,11 +79,11 @@ class Agent:
                 print(f"Agent bouge a la position: ({self.x}, {self.y})")
                 
             elif msg["header"] == GET_NB_AGENTS:
-                self.nb_agent_expected = msg["nb_agents"]
+                self.nb_agents_expected = msg["nb_agents"]
                 self.init_map_portion()
                 
             elif msg["header"] == GET_NB_CONNECTED_AGENTS:
-                self.nb_agent_connected = msg["nb_connected_agents"]
+                self.nb_agents_connected = msg["nb_connected_agents"]
                 
             elif msg["header"] == GET_DATA:
                 print(f"Valeur de cellule recu: {msg['cell_val']}")
@@ -100,27 +101,39 @@ class Agent:
                     print(f"Agent {self.agent_id} cle trouvee!")
 
                     self.update_map_portion(msg["position"])
-                    self.key_map += {"owner":msg["owner"], "position" : msg["position"]}
+                    self.key_map.append({"owner": msg["owner"], "position": msg["position"]})
                 elif msg["Msg type"] == BOX_DISCOVERED:  # Box discovered
                     print(f"Agent {self.agent_id} boite trouvee!")
 
                     self.update_map_portion(msg["position"])
-                    self.box_map += {"owner":msg["owner"], "position" : msg["position"]}
+                    self.box_map.append({"owner": msg["owner"], "position": msg["position"]})
+
 
                 elif msg["Msg type"] == POSITION:
                     self.robots_map[msg["owner"]] = msg["position"]
-                    x,y = msg["position"]
-                    self.known_map[int(x),int(y)] = 1.0
+                    self.update_map_portion(msg["position"])
+
                     
             
 
     def wait_for_connected_agent(self):
-        self.network.send({"header": GET_NB_AGENTS})
+        
         check_conn_agent = True
         while check_conn_agent:
-            if self.nb_agent_expected == self.nb_agent_connected:
-                print("les deux connectees!")
+            self.network.send({"header": GET_NB_AGENTS})
+            sleep(0.2)
+
+            self.network.send({"header": GET_NB_CONNECTED_AGENTS})
+            sleep(0.2)
+
+            print("waiting for other agents...")
+            if self.nb_agents_expected == self.nb_agents_connected:
+                print("all connected !")
                 check_conn_agent = False
+            else:
+                sleep(1)
+                
+                
 
     def move(self,x,y):
         """
@@ -214,6 +227,9 @@ class Agent:
 
             self.move(x,y) # move to new pos
             self.broadcast_new_pos(x,y) # broadcast new pos to others
+            
+            
+            self.update_map_portion((self.x,self.y))
 
             sleep(0.2) # timeout to be sure the callback has been done
 
@@ -225,8 +241,11 @@ class Agent:
                 else:
                     if obj_type == KEY_TYPE:
                         self.key_found = True
-                    else:
+                        self.key_map = []
+                    elif self.key_found:
                         self.box_found = True
+                        self.box_map = []
+
 
                 
                 print("GOT OBJECT")
@@ -287,17 +306,31 @@ class Agent:
     def move_to(self, obj_type):
         """
         Move to an object that has been sent via broadcast ( coordinates are known )
-        Returns """
-        print("move to ", obj_type)
+        Returns 
+        """
+
+        
+
+        print("MOVE TO : ", obj_type)
         if obj_type == KEY_TYPE:
             obj_map = self.key_map
         else:
             obj_map = self.box_map
 
-        if len(obj_map) > 1:
-            obj_pos = obj_map[0]["position"]
-        else:
+        obj_found = False
+        if isinstance(obj_map, dict):  # If obj_map is a dictionary, treat it as a list with one element
+            obj_map = [obj_map]
+
+        for obj in obj_map:
+            print(f"MOVE TO : OBJ LIST {obj}")
+            if obj["owner"] == self.agent_id:
+                obj_pos = obj["position"]
+                obj_found = True
+
+        if not obj_found:
+            print(f"MOVE TO : NO OBJ {obj_type} IN LIST")
             return (0,0)
+
         
         offset_x,offset_y = obj_pos[0] - self.x, obj_pos[1] - self.y
 
@@ -307,29 +340,81 @@ class Agent:
         return (x,y)
 
     def init_map_portion(self):
-        self.map_portion = np.zeros((self.h, self.w))
 
-        region_width = self.w // self.nb_agent_expected
+        if self.portion_init:
+            return
+        else:
+            self.portion_init = True
+        
+
+
+        self.map_portion = np.zeros((self.w, self.h))
+
+        # Ensure region_width is at least 1 to avoid division issues
+        region_width = max(1, self.w // self.nb_agents_expected)
 
         # Compute the start and end columns for the specified region
-        start_col = self.agent_id * region_width
-        end_col = (self.agent_id + 1)  * region_width + 1
 
-        self.map_portion[:, start_col:end_col] = 1
+
+        start_col = self.agent_id * region_width
+        end_col = start_col + region_width
+
+        # Ensure the last agent's region covers the remaining columns
+        if self.agent_id == self.nb_agents_expected - 1:
+            end_col = self.w
+
+        # Adjust indices to ensure agents only explore their assigned region
+        start_col = max(0, start_col)
+        end_col = min(self.w, end_col)
+
+        self.map_portion[start_col:end_col,:] = 1
+
+
 
     def update_map_portion(self,obj_pos):
         x,y = obj_pos
-        self.map_portion[x-2:x+3, y-2:y+3] = 0
+        last_map_portion = self.map_portion.copy()  # a virer
+        self.map_portion[max(0, x-2):min(self.map_portion.shape[0], x+3),\
+                         max(0, y-2):min(self.map_portion.shape[1], y+3)] = 0
+
         
 
     def explore(self):
-        print("Explore")
-        x,y = randint(-1,1),randint(-1,1)
-        if not self.cell_val == 0 and self.descent_cooldown <= 0:
+
+
+        # compute the nearest unexplored pixel
+
+        nearest_distance = float('inf')
+        best_move = None
+        x,y = 0,0
+
+        for i in range(self.w):
+            for j in range(self.h):
+                if self.map_portion[i, j] == 1:
+                    distance = np.sqrt((i - self.x)**2 + (j - self.y)**2)
+                    if distance < nearest_distance:
+                        nearest_distance = distance
+                        best_move = (i - self.x, j - self.y)
+
+        if best_move:
+            dx, dy = best_move
+            print(f"EXPLORE : BEST MOVE ({best_move})")
+            x = int(dx / abs(dx)) if dx != 0 else 0
+            y = int(dy / abs(dy)) if dy != 0 else 0
+            print(f"EXPLORE : ({x},{y})")
+
+        else:
+            print("EXPLORE : NO UNEXPLORED PIXELS")
+            self.in_explore = False
+
+        # DESCENT
+    
+        if self.cell_val != 0 and self.descent_cooldown <= 0: # enter descent
             self.in_descent = True
             self.descent_pos.append((self.x, self.y,self.cell_val))
-        else:
+        else: # update descent cooldown
             self.descent_cooldown -= 1
+
         
         return (x,y)
 
@@ -339,13 +424,14 @@ class Agent:
         Computes the next move for the agent based on its current state.
         :return: Coordinates (x, y) for the next move.
         """
-        
-        if self.last_map_portion != self.map_portion:
-            self.update_optimal_path()
+        if self.in_explore :
+            return self.explore()
         else:
-            self.cell_val ==
-        # Default to staying in the current position if no move is computed
-        return 0, 0
+            if not self.key_found:
+                return self.move_to(KEY_TYPE)
+            else:
+                return self.move_to(BOX_TYPE)
+
 
 
 

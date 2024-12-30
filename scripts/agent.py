@@ -54,17 +54,17 @@ class Agent:
         self.known_map = np.zeros((self.w, self.h))
         self.key_map = []
         self.box_map = []
+
         self.in_descent = False
         self.descent_pos = []
         self.last_descent_move = 1,1
         self.descent_cooldown = 0
-        self.in_explore = True
-        
-        
-
-
-        
-
+        self.explore_finished = False
+        self.descent_count = 0
+        self.descent_turned_90 = False
+        self.descent_go_back_done = False
+    
+    
     def msg_cb(self): 
         """ Method used to handle incoming messages """
         while self.running:
@@ -98,12 +98,10 @@ class Agent:
             # Handle item discovery
             if msg["header"] == BROADCAST_MSG:
                 if msg["Msg type"] == KEY_DISCOVERED:  # Key discovered
-                    print(f"Agent {self.agent_id} cle trouvee!")
 
                     self.update_map_portion(msg["position"])
                     self.key_map.append({"owner": msg["owner"], "position": msg["position"]})
                 elif msg["Msg type"] == BOX_DISCOVERED:  # Box discovered
-                    print(f"Agent {self.agent_id} boite trouvee!")
 
                     self.update_map_portion(msg["position"])
                     self.box_map.append({"owner": msg["owner"], "position": msg["position"]})
@@ -172,9 +170,6 @@ class Agent:
             
         command["direction"] = heading
         self.network.send(command)
-
-        if not heading == 0:
-            print("move success")
     
 
 
@@ -245,63 +240,73 @@ class Agent:
                     elif self.key_found:
                         self.box_found = True
                         self.box_map = []
+                    else:
+                        self.box_map.append({"owner": self.agent_id, "position": (self.x,self.y)}) # found box before key
 
 
-                
                 print("GOT OBJECT")
 
-    def compute_gradient(self, points):
-        gradients = []
-        for i in range(len(points) - 1):
-            x1, y1, v1 = points[i]
-            x2, y2, v2 = points[i + 1]
-            dx = x2 - x1
-            dy = y2 - y1
-            if dx != 0:
-                grad_x = (v2 - v1) / dx
-            else:
-                grad_x = 0
-            if dy != 0:
-                grad_y = (v2 - v1) / dy
-            else:
-                grad_y = 0
-            gradients.append((grad_x, grad_y))
-        # Average gradients
-        grad_x_avg = np.mean([g[0] for g in gradients])
-        grad_y_avg = np.mean([g[1] for g in gradients])
-        return grad_x_avg, grad_y_avg
+                if self.key_found and self.box_found:
+                    print("FINISHED !!!!")
+                    return
 
-    def do_descent(self, obj_type):
-        self.descent_pos.append((self.x, self.y,self.cell_val))
-        if len(self.descent_pos) > 1:
-            grad_x, grad_y = self.compute_gradient(self.descent_pos)
-            if grad_x == 0 and grad_y == 0: # la direction est orthogonale au gradient
-                heading = np.tan(self.last_descent_move[0:1]) + np.radians(90)
-                x,y = float(np.round(np.cos(heading))), float(np.round(np.sin(heading)))
-            else:
-                heading = np.arctan2(grad_y, grad_x)
-                x,y = round(np.cos(heading)), round(np.sin(heading))
-                self.last_descent_move = x,y
-        else:
-            if x + self.x < 0 or x + self.x >= self.w : # out of bounds
-                x = 0
-            else:
-                x = randint(-1,1)
-            
-            if y + self.y < 0 or y + self.y >= self.h:
-                y = 0
-            else:
-                y = randint(-1,1)
 
-        print("Descent", "Cle" if obj_type== KEY_TYPE else "Box")
+    def do_descent(self):
+        # Append current position and cell value to descent history
+        self.descent_pos.append((self.x, self.y, self.cell_val))
         
 
+        if self.descent_pos[-1][2] > self.descent_pos[-2][2]:
+            dx,dy = self.last_descent_move # go forward
+                
+            print("DESCENT: CONTINUE")
+
+        else:
+            if not self.descent_go_back_done:
+                dx,dy = (-self.last_descent_move[0],-self.last_descent_move[1]) # go back
+                self.descent_go_back_done = True
+                print("DESCENT: GO BACK")
+
+            else:
+                if not self.descent_turned_90:
+                    heading = np.arctan2(self.last_descent_move[1], self.last_descent_move[0]) + np.radians(90)
+                    dx, dy = int(np.round(np.cos(heading))), int(np.round(np.sin(heading)))
+                    self.descent_turned_90 = True
+                    self.descent_go_back_done = False
+                    print("DESCENT: TURN 90")
+
+
+                else:
+                    dx,dy = (-self.last_descent_move[0],-self.last_descent_move[1]) # go back
+                    self.descent_turned_90 = False
+                    print("DESCENT: TURN 180")
+
+                    
+
+        # Update position
+
+        print(f"DESCENT: MOVE ({dx}, {dy})")
+        self.last_descent_move = (dx,dy)
+            
+
         if self.cell_val == 1: # on a key or a chest
+            print("DESCENT : SUCESS !")
+            self.descent_count = 0
             self.in_descent = False # stop descent
-            self.descent_cooldown = 20
+            self.descent_cooldown = 5
             self.descent_pos = []
-            x,y = 0,0 # do not move
-        return (x,y)
+            dx,dy = 0,0 # do not move
+        else:
+            if self.descent_count > 20 : 
+                print("DESCENT : FAILED !")
+                self.descent_count = 0
+                self.in_descent = False # stop descent
+                self.descent_cooldown = 5
+                self.descent_pos = []
+                dx,dy = 0,0 # do not move
+            else:
+                self.descent_count += 1
+        return (dx,dy)
     
     def move_to(self, obj_type):
         """
@@ -326,6 +331,7 @@ class Agent:
             if obj["owner"] == self.agent_id:
                 obj_pos = obj["position"]
                 obj_found = True
+                break
 
         if not obj_found:
             print(f"MOVE TO : NO OBJ {obj_type} IN LIST")
@@ -381,7 +387,6 @@ class Agent:
 
     def explore(self):
 
-
         # compute the nearest unexplored pixel
 
         nearest_distance = float('inf')
@@ -401,17 +406,18 @@ class Agent:
             print(f"EXPLORE : BEST MOVE ({best_move})")
             x = int(dx / abs(dx)) if dx != 0 else 0
             y = int(dy / abs(dy)) if dy != 0 else 0
-            print(f"EXPLORE : ({x},{y})")
 
         else:
             print("EXPLORE : NO UNEXPLORED PIXELS")
-            self.in_explore = False
+            self.explore_finished = True
 
         # DESCENT
     
         if self.cell_val != 0 and self.descent_cooldown <= 0: # enter descent
             self.in_descent = True
             self.descent_pos.append((self.x, self.y,self.cell_val))
+            self.last_descent_move = (x,y)
+            self.descent_go_back_done = False
         else: # update descent cooldown
             self.descent_cooldown -= 1
 
@@ -424,13 +430,16 @@ class Agent:
         Computes the next move for the agent based on its current state.
         :return: Coordinates (x, y) for the next move.
         """
-        if self.in_explore :
-            return self.explore()
+        if self.in_descent:
+            return self.do_descent()
         else:
-            if not self.key_found:
-                return self.move_to(KEY_TYPE)
+            if not self.explore_finished :
+                return self.explore()
             else:
-                return self.move_to(BOX_TYPE)
+                if not self.key_found:
+                    return self.move_to(KEY_TYPE)
+                else:
+                    return self.move_to(BOX_TYPE)
 
 
 
@@ -445,16 +454,5 @@ if __name__ == "__main__":
     agent = Agent(args.server_ip)
 
     agent.main_loop()  # Start autonomous agent behavior
-    
-    try:    #Manual control test0
-        while True:
-            cmds = {"header": int(input("0 <-> Broadcast msg\n1 <-> Get data\n2 <-> Move\n3 <-> Get nb connected agents\n4 <-> Get nb agents\n5 <-> Get item owner\n"))}
-            if cmds["header"] == BROADCAST_MSG:
-                cmds["Msg type"] = int(input("1 <-> Key discovered\n2 <-> Box discovered\n3 <-> Completed\n"))
-                cmds["position"] = (agent.x, agent.y)
-                cmds["owner"] = randint(0,3) # TODO: specify the owner of the item
-            elif cmds["header"] == MOVE:
-                cmds["direction"] = int(input("0 <-> Stand\n1 <-> Left\n2 <-> Right\n3 <-> Up\n4 <-> Down\n5 <-> UL\n6 <-> UR\n7 <-> DL\n8 <-> DR\n"))
-            agent.network.send(cmds)
-    except KeyboardInterrupt:
+    while True:  # keep alive
         pass

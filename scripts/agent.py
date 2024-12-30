@@ -18,7 +18,6 @@ from random import randint
 class Agent:
     """ Class that implements the behaviour of each agent based on their perception and communication with other agents """
     def __init__(self, server_ip):
-        #TODO: DEINE YOUR ATTRIBUTES HERE
 
         self.x, self.y = None, None   # Position of the agent
         self.w, self.h = None, None   # Environment dimensions (width, height)
@@ -57,7 +56,7 @@ class Agent:
 
         self.in_descent = False
         self.descent_pos = []
-        self.last_descent_move = 1,1
+        self.last_descent_move = (0,0)
         self.descent_cooldown = 0
         self.explore_finished = False
         self.descent_count = 0
@@ -144,7 +143,6 @@ class Agent:
         """
         command = {"header": 2}
 
-
         heading = 0
 
         if x == -1 and y == 0:
@@ -209,220 +207,293 @@ class Agent:
 
         self.network.send(command)
 
-                  
+
+
     def main_loop(self):
+        """
+        Main loop controlling the robot's behavior.
+        Continuously computes moves, updates its position, interacts with objects,
+        and communicates with other robots until its task is complete.
+        """
         while True:
-            #x,y = 0,0
-            x,y = self.compute_move() # position of next move
+            # Compute the next move based on the current state
+            x, y = self.compute_move()
 
+            # Check for potential collisions with other robots
             for key, (robot_x, robot_y) in self.robots_map.items():
-                if robot_x == self.x and robot_y == self.y:  # if blocked by other bots
+                if robot_x == self.x and robot_y == self.y:  # If another robot is blocking
                     print("avoiding collision")
-                    continue # do not move
+                    continue  # Skip this iteration and avoid moving
 
-            self.move(x,y) # move to new pos
-            self.broadcast_new_pos(x,y) # broadcast new pos to others
-            
-            
-            self.update_map_portion((self.x,self.y))
+            # Move to the newly computed position
+            self.move(x, y)
 
-            sleep(0.2) # timeout to be sure the callback has been done
+            # Broadcast the new position to other robots
+            self.broadcast_new_pos(x, y)
 
-            if self.cell_val == 1: # on a key or a chest
-                cell_owner,obj_type = self.get_item_owner_type() # request object type and owner
-                
-                if not cell_owner == self.agent_id: # object not for this robot
-                    self.broadcast_obj_pos(cell_owner,obj_type)
+            # Update the portion of the map based on the new position
+            self.update_map_portion((self.x, self.y))
+
+            # Pause briefly to ensure asynchronous callbacks (if any) are processed
+            sleep(0.2)
+
+            # Check the current cell value for special objects
+            if self.cell_val == 1:  # Indicates a key or chest is present
+                # Get the owner and type of the object in the current cell
+                cell_owner, obj_type = self.get_item_owner_type()
+
+                # Handle objects not owned by this robot
+                if cell_owner != self.agent_id:
+                    self.broadcast_obj_pos(cell_owner, obj_type)
                 else:
+                    # Handle cases where the robot owns the object
                     if obj_type == KEY_TYPE:
-                        self.key_found = True
-                        self.key_map = []
+                        self.key_found = True  # Mark key as found
+                        self.key_map = []  # Clear the key map
                     elif self.key_found:
-                        self.box_found = True
-                        self.box_map = []
+                        self.box_found = True  # Mark box as found (after key)
+                        self.box_map = []  # Clear the box map
                     else:
-                        self.box_map.append({"owner": self.agent_id, "position": (self.x,self.y)}) # found box before key
+                        # If the box is found before the key
+                        self.box_map.append({
+                            "owner": self.agent_id,
+                            "position": (self.x, self.y)
+                        })
 
+                print("GOT OBJECT")  # Debug message indicating object interaction
 
-                print("GOT OBJECT")
-
+                # Check if both key and box have been found
                 if self.key_found and self.box_found:
-                    print("FINISHED !!!!")
-                    return
+                    print("FINISHED !!!!")  # Task completed
+                    return  # Exit the loop
+
 
 
     def do_descent(self):
-        # Append current position and cell value to descent history
+        """
+        Handles the descent process, adjusting the robot's movement based on the current and previous cell values.
+        The function uses a heuristic to decide whether to continue, backtrack, turn, or stop descent based on progress.
+        """
+        # Record the current position and cell value in the descent history
         self.descent_pos.append((self.x, self.y, self.cell_val))
-        
 
+        # Determine movement based on the progress in the descent
         if self.descent_pos[-1][2] > self.descent_pos[-2][2]:
-            dx,dy = self.last_descent_move # go forward
-                
+            # Progress has improved (higher cell value), continue forward
+            dx, dy = self.last_descent_move
             print("DESCENT: CONTINUE")
-
         else:
             if not self.descent_go_back_done:
-                dx,dy = (-self.last_descent_move[0],-self.last_descent_move[1]) # go back
+                # No improvement and haven't gone back yet, so backtrack
+                dx, dy = (-self.last_descent_move[0], -self.last_descent_move[1])
                 self.descent_go_back_done = True
                 print("DESCENT: GO BACK")
-
             else:
                 if not self.descent_turned_90:
+                    # No improvement after backtracking, turn 90 degrees
                     heading = np.arctan2(self.last_descent_move[1], self.last_descent_move[0]) + np.radians(90)
                     dx, dy = int(np.round(np.cos(heading))), int(np.round(np.sin(heading)))
                     self.descent_turned_90 = True
                     self.descent_go_back_done = False
                     print("DESCENT: TURN 90")
-
-
                 else:
-                    dx,dy = (-self.last_descent_move[0],-self.last_descent_move[1]) # go back
+                    # No improvement after turning 90 degrees, turn 180 degrees (reverse direction)
+                    dx, dy = (-self.last_descent_move[0], -self.last_descent_move[1])
                     self.descent_turned_90 = False
                     print("DESCENT: TURN 180")
 
-                    
-
-        # Update position
-
+        # Log the movement decision
         print(f"DESCENT: MOVE ({dx}, {dy})")
-        self.last_descent_move = (dx,dy)
-            
+        self.last_descent_move = (dx, dy)
 
-        if self.cell_val == 1: # on a key or a chest
-            print("DESCENT : SUCESS !")
+        # Check if the robot has reached a key or chest
+        if self.cell_val == 1:
+            print("DESCENT: SUCCESS!")
+            # Reset descent state after success
             self.descent_count = 0
-            self.in_descent = False # stop descent
+            self.in_descent = False
             self.descent_cooldown = 5
             self.descent_pos = []
-            dx,dy = 0,0 # do not move
+            dx, dy = 0, 0  # Stop moving
         else:
-            if self.descent_count > 20 : 
-                print("DESCENT : FAILED !")
+            # Handle failure cases or continue the descent
+            if self.descent_count > 20:
+                # Descent failed after too many attempts
+                print("DESCENT: FAILED!")
                 self.descent_count = 0
-                self.in_descent = False # stop descent
+                self.in_descent = False
                 self.descent_cooldown = 5
                 self.descent_pos = []
-                dx,dy = 0,0 # do not move
+                dx, dy = 0, 0  # Stop moving
             else:
+                # Increment descent attempt counter
                 self.descent_count += 1
-        return (dx,dy)
+
+        # Return the movement decision
+        return (dx, dy)
+
     
     def move_to(self, obj_type):
         """
-        Move to an object that has been sent via broadcast ( coordinates are known )
-        Returns 
-        """
-
+        Determines the movement required to reach a specific object of a given type.
+        The object's coordinates are assumed to be known via broadcasts, and this function
+        computes the direction based on the object's position relative to the robot.
         
+        Parameters:
+            obj_type (str): The type of object to move to (e.g., key or box).
 
-        print("MOVE TO : ", obj_type)
+        Returns:
+            tuple: The movement vector as (x, y), where each value is either -1, 0, or 1.
+        """
+        print("MOVE TO:", obj_type)  # Debug log for the requested object type
+
+        # Determine which map to use based on the object type
         if obj_type == KEY_TYPE:
             obj_map = self.key_map
         else:
             obj_map = self.box_map
 
         obj_found = False
-        if isinstance(obj_map, dict):  # If obj_map is a dictionary, treat it as a list with one element
+
+        # Normalize obj_map to always be a list, even if it's a single dictionary
+        if isinstance(obj_map, dict):
             obj_map = [obj_map]
 
+        # Search for the object owned by this agent in the object map
         for obj in obj_map:
-            print(f"MOVE TO : OBJ LIST {obj}")
-            if obj["owner"] == self.agent_id:
-                obj_pos = obj["position"]
+            print(f"MOVE TO: OBJ LIST {obj}")  # Debug log for current object in the list
+            if obj["owner"] == self.agent_id:  # Check if the object belongs to this robot
+                obj_pos = obj["position"]  # Extract the object's position
                 obj_found = True
-                break
+                break  # Exit the loop once the object is found
 
+        # If no object of the desired type is found, return no movement
         if not obj_found:
-            print(f"MOVE TO : NO OBJ {obj_type} IN LIST")
-            return (0,0)
+            print(f"MOVE TO: NO OBJ {obj_type} IN LIST")
+            return (0, 0)
 
-        
-        offset_x,offset_y = obj_pos[0] - self.x, obj_pos[1] - self.y
+        # Calculate the vector to the target object's position
+        offset_x, offset_y = obj_pos[0] - self.x, obj_pos[1] - self.y
 
-        heading = np.arctan2(offset_y, offset_x) # normalize vector to 1 for movement
-        x,y = round(np.cos(heading)), round(np.sin(heading))
+        # Compute the heading (angle) towards the object and normalize it to a unit vector
+        heading = np.arctan2(offset_y, offset_x)
+        x, y = round(np.cos(heading)), round(np.sin(heading))  # Convert heading to discrete movement
 
-        return (x,y)
+        return (x, y)  # Return the movement vector
+
 
     def init_map_portion(self):
+        """
+        Initializes the portion of the map assigned to this agent for exploration.
+        Each agent is responsible for a specific region of the map, determined by 
+        dividing the map width among the expected number of agents.
 
+        This function ensures that:
+        - The map portion for the agent is set up and marked as initialized.
+        - The region assigned to the agent is clearly defined and adjusted for edge cases.
+
+        Returns:
+            None
+        """
+        # Check if the map portion is already initialized
         if self.portion_init:
             return
         else:
-            self.portion_init = True
-        
+            self.portion_init = True  # Mark the portion as initialized
 
-
+        # Create a map portion filled with zeros (unexplored)
         self.map_portion = np.zeros((self.w, self.h))
 
-        # Ensure region_width is at least 1 to avoid division issues
-        region_width = max(1, self.w // self.nb_agents_expected)
+        # Calculate the width of the region assigned to each agent
+        region_width = max(1, self.w // self.nb_agents_expected)  # Ensure a minimum width of 1
 
-        # Compute the start and end columns for the specified region
-
-
+        # Determine the start and end columns for this agent's region
         start_col = self.agent_id * region_width
         end_col = start_col + region_width
 
-        # Ensure the last agent's region covers the remaining columns
+        # Ensure the last agent's region covers any remaining columns
         if self.agent_id == self.nb_agents_expected - 1:
             end_col = self.w
 
-        # Adjust indices to ensure agents only explore their assigned region
+        # Adjust indices to ensure they are within map bounds
         start_col = max(0, start_col)
         end_col = min(self.w, end_col)
 
-        self.map_portion[start_col:end_col,:] = 1
+        # Mark this agent's assigned region as active (value = 1)
+        self.map_portion[start_col:end_col, :] = 1
 
 
+    def update_map_portion(self, obj_pos):
+        """
+        Updates the map portion to reflect areas explored around the given position.
+        A square region centered on the object's position is marked as explored (value = 0).
 
-    def update_map_portion(self,obj_pos):
-        x,y = obj_pos
-        last_map_portion = self.map_portion.copy()  # a virer
-        self.map_portion[max(0, x-2):min(self.map_portion.shape[0], x+3),\
-                         max(0, y-2):min(self.map_portion.shape[1], y+3)] = 0
+        Parameters:
+            obj_pos (tuple): The (x, y) coordinates of the position to update.
 
-        
+        Returns:
+            None
+        """
+        # Extract x and y coordinates from the object's position
+        x, y = obj_pos
+
+        # Define the range around the position to be marked as explored
+        self.map_portion[
+            max(0, x - 2):min(self.map_portion.shape[0], x + 3),
+            max(0, y - 2):min(self.map_portion.shape[1], y + 3)
+        ] = 0  # Mark the region as explored (value = 0)
+
 
     def explore(self):
+        """
+        Explores the map to find the nearest unexplored pixel and moves towards it.
+        If no unexplored pixels are left, exploration is marked as finished.
+        The function also handles transitioning into the descent phase if certain conditions are met.
 
-        # compute the nearest unexplored pixel
+        Returns:
+            tuple: The (x, y) direction of the next move.
+        """
 
-        nearest_distance = float('inf')
-        best_move = None
-        x,y = 0,0
+        # Initialize variables to track the nearest unexplored pixel
+        nearest_distance = float('inf')  # Start with an infinite distance
+        best_move = None  # Placeholder for the best move
+        x, y = 0, 0  # Default movement is stationary
 
-        for i in range(self.w):
-            for j in range(self.h):
-                if self.map_portion[i, j] == 1:
-                    distance = np.sqrt((i - self.x)**2 + (j - self.y)**2)
-                    if distance < nearest_distance:
+        # Iterate through the map to find the closest unexplored pixel
+        for i in range(self.w):  # Loop through map width
+            for j in range(self.h):  # Loop through map height
+                if self.map_portion[i, j] == 1:  # Check if the pixel is unexplored
+                    # Calculate the Euclidean distance to the unexplored pixel
+                    distance = np.sqrt((i - self.x) ** 2 + (j - self.y) ** 2)
+                    if distance < nearest_distance:  # Update if a closer pixel is found
                         nearest_distance = distance
-                        best_move = (i - self.x, j - self.y)
+                        best_move = (i - self.x, j - self.y)  # Store the relative move
 
+        # Determine the direction to move towards the nearest unexplored pixel
         if best_move:
-            dx, dy = best_move
-            print(f"EXPLORE : BEST MOVE ({best_move})")
+            dx, dy = best_move  # Extract the best relative move
+            print(f"EXPLORE: BEST MOVE ({best_move})")
+            # Normalize the move to a step of 1 in x and y directions
             x = int(dx / abs(dx)) if dx != 0 else 0
             y = int(dy / abs(dy)) if dy != 0 else 0
-
         else:
-            print("EXPLORE : NO UNEXPLORED PIXELS")
+            # No unexplored pixels found, exploration is complete
+            print("EXPLORE: NO UNEXPLORED PIXELS")
             self.explore_finished = True
 
-        # DESCENT
-    
-        if self.cell_val != 0 and self.descent_cooldown <= 0: # enter descent
-            self.in_descent = True
-            self.descent_pos.append((self.x, self.y,self.cell_val))
-            self.last_descent_move = (x,y)
-            self.descent_go_back_done = False
-        else: # update descent cooldown
+        # Handle descent phase
+        if self.cell_val != 0 and self.descent_cooldown <= 0:  # Condition to enter descent
+            self.in_descent = True  # Enable descent mode
+            # Record the starting position and cell value for descent
+            self.descent_pos.append((self.x, self.y, self.cell_val))
+            self.last_descent_move = (x, y)  # Store the last move direction
+            self.descent_go_back_done = False  # Reset go-back status
+        else:
+            # Decrement descent cooldown if not entering descent
             self.descent_cooldown -= 1
 
-        
-        return (x,y)
+        return (x, y)  # Return the computed move direction
+
 
 
     def compute_move(self):

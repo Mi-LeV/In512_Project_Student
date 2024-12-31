@@ -30,6 +30,7 @@ class Agent:
 
 
         self.robots_map = {}
+        self.walked_map = []
 
         #DO NOT TOUCH THE FOLLOWING INSTRUCTIONS
         self.network = Network(server_ip=server_ip)
@@ -62,6 +63,7 @@ class Agent:
         self.descent_count = 0
         self.descent_turned_90 = False
         self.descent_go_back_done = False
+
     
     
     def msg_cb(self): 
@@ -109,6 +111,8 @@ class Agent:
                 elif msg["Msg type"] == POSITION:
                     self.robots_map[msg["owner"]] = msg["position"]
                     self.update_map_portion(msg["position"])
+                    if not msg["position"] in self.walked_map:
+                        self.walked_map.append(msg["position"])
 
                     
             
@@ -228,6 +232,9 @@ class Agent:
             # Move to the newly computed position
             self.move(x, y)
 
+            if not (self.x,self.y) in self.walked_map:
+                self.walked_map.append((self.x,self.y))
+
             # Broadcast the new position to other robots
             self.broadcast_new_pos(x, y)
 
@@ -263,8 +270,9 @@ class Agent:
                 print("GOT OBJECT")  # Debug message indicating object interaction
 
                 # Check if both key and box have been found
-                if self.key_found and self.box_found:
+                if self.key_found and self.box_found and self.explore_finished:
                     print("FINISHED !!!!")  # Task completed
+                    print(f"{len(self.walked_map)} EXPLORED IN TOTAL !!!!")
                     return  # Exit the loop
 
 
@@ -438,9 +446,11 @@ class Agent:
         x, y = obj_pos
 
         # Define the range around the position to be marked as explored
+        EXPLORED_AREA = 2  # Variable defining the explored radius
+
         self.map_portion[
-            max(0, x - 2):min(self.map_portion.shape[0], x + 3),
-            max(0, y - 2):min(self.map_portion.shape[1], y + 3)
+            max(0, x - EXPLORED_AREA):min(self.map_portion.shape[0], x + EXPLORED_AREA + 1),
+            max(0, y - EXPLORED_AREA):min(self.map_portion.shape[1], y + EXPLORED_AREA + 1)
         ] = 0  # Mark the region as explored (value = 0)
 
 
@@ -465,6 +475,8 @@ class Agent:
                 if self.map_portion[i, j] == 1:  # Check if the pixel is unexplored
                     # Calculate the Euclidean distance to the unexplored pixel
                     distance = np.sqrt((i - self.x) ** 2 + (j - self.y) ** 2)
+                    # calculate custom distance to favor diagonal
+                    #distance = min(abs(i - self.x), abs(j - self.y)) + 2 * abs(abs(i - self.x) - abs(j - self.y))
                     if distance < nearest_distance:  # Update if a closer pixel is found
                         nearest_distance = distance
                         best_move = (i - self.x, j - self.y)  # Store the relative move

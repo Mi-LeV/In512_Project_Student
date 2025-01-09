@@ -35,7 +35,8 @@ EXPLORE_ZONE = 4   #inform other agents about your zone
 """ GAME """
 GAME_ID = -1    #id of the game when it sends a message to an agent
 KEY_NEIGHBOUR_PERCENTAGE = 0.5  #value of an adjacent cell to a key
-BOX_NEIGHBOUR_PERCENTAGE = 0.6  #value of an adjacent cell to a key
+BOX_NEIGHBOUR_PERCENTAGE = 0.6  #value of an adjacent cell to a bow
+OBSTACLE_NEIGHBOUR_PERCENTAGE = 0.35  #value of an adjacent cell to a obstacle
 KEY_TYPE = 0    #one of the types of item that is output by the 'Get item owner' request
 BOX_TYPE = 1
 

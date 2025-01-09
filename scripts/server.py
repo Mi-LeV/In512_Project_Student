@@ -21,9 +21,9 @@ if os.name == "nt": #If you are on Windows
 
 class Server:
     """ Server handling communication between the agents and the game """
-    def __init__(self, conf, nb_agents, map_id):
+    def __init__(self, conf, nb_agents, map_id,nb_obstacles):
         """ Initialize the server """
-        self.game = Game(nb_agents, map_id)
+        self.game = Game(nb_agents, map_id, nb_obstacles)
         self.nb_disconnected = 0
         self.id_count = 0
         self.conf = conf
@@ -94,6 +94,7 @@ if __name__ == "__main__":
     parser.add_argument("-i", "--ip_server", help="Ip address of the server", type=str, default="localhost")
     parser.add_argument("-nb", "--nb_agents", help="Number of agents: 1, 2, 3 or 4", type=int, default=2)
     parser.add_argument("-mi", "--map_id", help="Map to load: 1 or 2 or 3", type=int, default=3)
+    parser.add_argument("-no", "--nb_obstacles", help="Number of obstacles: 1, 2, 3 or 4", type=int, default=1)
 
 
     args = parser.parse_args()
@@ -105,4 +106,4 @@ if __name__ == "__main__":
     if not args.map_id in range(1, 4):    #There are only 3 maps
         print("There are only 2 maps!")
         sys.exit()
-    server = Server((args.ip_server, port), args.nb_agents, args.map_id)
+    server = Server((args.ip_server, port), args.nb_agents, args.map_id, args.nb_obstacles)

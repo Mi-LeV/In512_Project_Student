@@ -81,7 +81,7 @@ class Agent:
                 self.x, self.y = msg["x"], msg["y"]
                 self.cell_val = msg["cell_val"]
                 self.known_map[self.x,self.y] = 1.0
-                print(f"Agent bouge a la position: ({self.x}, {self.y})")
+                print(f"    SERVER: MOVE TO ({self.x}, {self.y})")
                 
             elif msg["header"] == GET_NB_AGENTS:
                 self.nb_agents_expected = msg["nb_agents"]
@@ -91,13 +91,13 @@ class Agent:
                 self.nb_agents_connected = msg["nb_connected_agents"]
                 
             elif msg["header"] == GET_DATA:
-                print(f"Valeur de cellule recu: {msg['cell_val']}")
+                print(f"    SERVER: CELL RECEIVED {msg['cell_val']}")
             
             elif msg["header"] == GET_ITEM_OWNER:
                 self.cell_owner = msg['owner']
                 self.cell_type = msg['type']
                 type_obj = "Cle" if msg['type'] == KEY_TYPE else "Box"
-                print(f"Valeur de cellule recu: {msg['owner']} , " + type_obj)
+                print(f"    SERVER: CELL RECEIVED {msg['owner']} , " + type_obj)
             
                 
             # Handle item discovery
@@ -529,7 +529,7 @@ class Agent:
 
 
         # Handle descent phase
-        if self.cell_val != 0 and self.descent_cooldown <= 0:  # Condition to enter descent
+        if self.cell_val != 0 and self.descent_cooldown <= 0 and not self.object_near_taken():  # Condition to enter descent
             self.in_descent = True  # Enable descent mode
             # Record the starting position and cell value for descent
             self.descent_pos.append((self.x, self.y, self.cell_val))
@@ -564,6 +564,38 @@ class Agent:
                 else:
                     return self.move_to(BOX_TYPE)
 
+    def object_near_taken(self):
+        # Define the 8 neighboring relative positions
+        first_order_neighbors = [
+            (-1, -1), (-1, 0), (-1, 1),  # Upper row neighbors
+            (0, -1),   (0, 0),  (0, 1),   # Side neighbors
+            (1, -1), (1, 0), (1, 1)     # Lower row neighbors
+        ]
+        # Define the second-order neighboring relative positions
+        second_order_neighbors = [
+            (-2, -2), (-2, -1), (-2, 0), (-2, 1), (-2, 2),  # 2nd row above
+            (-1, -2), (-1, 2), (0, -2), (0, 2), (1, -2), (1, 2),  # Horizontal and vertical extensions
+            (2, -2), (2, -1), (2, 0), (2, 1), (2, 2)  # 2nd row below
+        ]
+        third_order_neighbors = [
+            (-3, -3), (-3, -2), (-3, -1), (-3, 0), (-3, 1), (-3, 2), (-3, 3),
+            (-2, -3), (-2, 3), (-1, -3), (-1, 3), (0, -3), (0, 3), (1, -3), (1, 3),
+            (2, -3), (2, 3), (3, -3), (3, -2), (3, -1), (3, 0), (3, 1), (3, 2), (3, 3)
+        ]
+
+        # Combine both first-order and second-order neighbors
+        all_neighbors = first_order_neighbors + second_order_neighbors + third_order_neighbors
+
+        # Extract positions from key_map and box_map
+        all_positions = [entry["position"] for entry in self.key_map + self.box_map]
+
+        # Check if (self.x, self.y) is a neighbor of any position in the maps
+        for pos_x, pos_y in all_positions:
+            for dx, dy in all_neighbors:
+                if (self.x, self.y) == (pos_x + dx, pos_y + dy):
+                    return True
+
+        return False
 
 
 

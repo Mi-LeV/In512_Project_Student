@@ -52,6 +52,7 @@ class Agent:
         self.cell_owner = -1
         self.cell_type = -1
         self.known_map = np.zeros((self.w, self.h))
+        self.obstacle_map = np.zeros((self.w, self.h))
         self.key_map = []
         self.box_map = []
 
@@ -63,6 +64,9 @@ class Agent:
         self.descent_count = 0
         self.descent_turned_90 = False
         self.descent_go_back_done = False
+
+        self.last_move = (0, 0)
+        self.go_back = False
 
     
     
@@ -221,7 +225,7 @@ class Agent:
         """
         while True:
             # Compute the next move based on the current state
-            x, y = self.compute_move()
+            dx, dy = self.compute_move()
 
             # Check for potential collisions with other robots
             for key, (robot_x, robot_y) in self.robots_map.items():
@@ -230,19 +234,27 @@ class Agent:
                     continue  # Skip this iteration and avoid moving
 
             # Move to the newly computed position
-            self.move(x, y)
+            self.move(dx, dy)
 
             if not (self.x,self.y) in self.walked_map:
                 self.walked_map.append((self.x,self.y))
 
             # Broadcast the new position to other robots
-            self.broadcast_new_pos(x, y)
+            self.broadcast_new_pos(self.x, self.y)
 
             # Update the portion of the map based on the new position
             self.update_map_portion((self.x, self.y))
 
             # Pause briefly to ensure asynchronous callbacks (if any) are processed
             sleep(0.2)
+
+            self.last_move = (dx, dy)
+
+            if self.cell_val == 0.35:
+                self.obstacle_map[int(self.x),int(self.y)] = 1
+                self.go_back = True
+            else:
+                self.go_back = False
 
             # Check the current cell value for special objects
             if self.cell_val == 1:  # Indicates a key or chest is present
@@ -320,17 +332,17 @@ class Agent:
             # Reset descent state after success
             self.descent_count = 0
             self.in_descent = False
-            self.descent_cooldown = 5
+            self.descent_cooldown = 20
             self.descent_pos = []
             dx, dy = 0, 0  # Stop moving
         else:
             # Handle failure cases or continue the descent
-            if self.descent_count > 20:
+            if self.descent_count > 50:
                 # Descent failed after too many attempts
                 print("DESCENT: FAILED!")
                 self.descent_count = 0
                 self.in_descent = False
-                self.descent_cooldown = 5
+                self.descent_cooldown = 20
                 self.descent_pos = []
                 dx, dy = 0, 0  # Stop moving
             else:
@@ -383,9 +395,21 @@ class Agent:
         # Calculate the vector to the target object's position
         offset_x, offset_y = obj_pos[0] - self.x, obj_pos[1] - self.y
 
-        # Compute the heading (angle) towards the object and normalize it to a unit vector
-        heading = np.arctan2(offset_y, offset_x)
-        x, y = round(np.cos(heading)), round(np.sin(heading))  # Convert heading to discrete movement
+        first_loop = True
+        heading_offset = 0
+        x,y = 0,0
+        while self.obstacle_map[int(self.x+x),int(self.y+y)] == 1 or first_loop: # avoid obstacle
+
+            # Compute the heading (angle) towards the object and normalize it to a unit vector
+            if not first_loop:
+                heading_offset += np.pi/90
+            
+            heading = np.arctan2(offset_y, offset_x) + heading_offset
+            x, y = round(np.cos(heading)), round(np.sin(heading))  # Convert heading to discrete movement
+
+            first_loop = False
+
+        
 
         return (x, y)  # Return the movement vector
 
@@ -472,14 +496,24 @@ class Agent:
         # Iterate through the map to find the closest unexplored pixel
         for i in range(self.w):  # Loop through map width
             for j in range(self.h):  # Loop through map height
-                if self.map_portion[i, j] == 1:  # Check if the pixel is unexplored
+                if self.map_portion[i, j] == 1 :  # Check if the pixel is unexplored and not obstacle
                     # Calculate the Euclidean distance to the unexplored pixel
                     distance = np.sqrt((i - self.x) ** 2 + (j - self.y) ** 2)
                     # calculate custom distance to favor diagonal
                     #distance = min(abs(i - self.x), abs(j - self.y)) + 2 * abs(abs(i - self.x) - abs(j - self.y))
                     if distance < nearest_distance:  # Update if a closer pixel is found
-                        nearest_distance = distance
-                        best_move = (i - self.x, j - self.y)  # Store the relative move
+                        
+                        dx, dy = i - self.x, j - self.y  # Store the relative move
+                        
+                        # Normalize the move to a step of 1 in x and y directions
+                        x = int(dx / abs(dx)) if dx != 0 else 0
+                        y = int(dy / abs(dy)) if dy != 0 else 0
+
+                        if self.obstacle_map[int(self.x+x),int(self.y+y)] == 0: # avoid obstacle
+                            nearest_distance = distance
+                            best_move = x,y
+
+                        
 
         # Determine the direction to move towards the nearest unexplored pixel
         if best_move:
@@ -493,6 +527,7 @@ class Agent:
             print("EXPLORE: NO UNEXPLORED PIXELS")
             self.explore_finished = True
 
+
         # Handle descent phase
         if self.cell_val != 0 and self.descent_cooldown <= 0:  # Condition to enter descent
             self.in_descent = True  # Enable descent mode
@@ -503,6 +538,7 @@ class Agent:
         else:
             # Decrement descent cooldown if not entering descent
             self.descent_cooldown -= 1
+        
 
         return (x, y)  # Return the computed move direction
 
@@ -513,6 +549,10 @@ class Agent:
         Computes the next move for the agent based on its current state.
         :return: Coordinates (x, y) for the next move.
         """
+        if self.go_back:
+            dx,dy = self.last_move
+            return (-dx,-dy)
+        
         if self.in_descent:
             return self.do_descent()
         else:

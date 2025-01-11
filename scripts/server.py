@@ -107,3 +107,4 @@ if __name__ == "__main__":
         print("There are only 2 maps!")
         sys.exit()
     server = Server((args.ip_server, port), args.nb_agents, args.map_id, args.nb_obstacles)
+    

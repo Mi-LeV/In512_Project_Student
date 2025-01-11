@@ -294,8 +294,12 @@ class Agent:
         Handles the descent process, adjusting the robot's movement based on the current and previous cell values.
         The function uses a heuristic to decide whether to continue, backtrack, turn, or stop descent based on progress.
         """
-        # Record the current position and cell value in the descent history
+
         self.descent_pos.append((self.x, self.y, self.cell_val))
+        directions = [
+            (-1, 0), (1, 0), (0, -1), (0, 1),  
+            (-1, -1), (-1, 1), (1, -1), (1, 1)  
+        ]
 
         # Determine movement based on the progress in the descent
         if self.descent_pos[-1][2] > self.descent_pos[-2][2]:
@@ -303,23 +307,25 @@ class Agent:
             dx, dy = self.last_descent_move
             print("DESCENT: CONTINUE")
         else:
+            # No progress detected, decide on a new move
             if not self.descent_go_back_done:
-                # No improvement and haven't gone back yet, so backtrack
                 dx, dy = (-self.last_descent_move[0], -self.last_descent_move[1])
                 self.descent_go_back_done = True
                 print("DESCENT: GO BACK")
             else:
-                if not self.descent_turned_90:
-                    # No improvement after backtracking, turn 90 degrees
-                    heading = np.arctan2(self.last_descent_move[1], self.last_descent_move[0]) + np.radians(90)
-                    dx, dy = int(np.round(np.cos(heading))), int(np.round(np.sin(heading)))
-                    self.descent_turned_90 = True
-                    self.descent_go_back_done = False
-                    print("DESCENT: TURN 90")
+                for d in directions:
+                    nx, ny = self.x + d[0], self.y + d[1]
+                    if 0 <= nx < self.w and 0 <= ny < self.h:
+                        if (nx, ny) not in [pos[:2] for pos in self.descent_pos]:
+                            if self.obstacle_map[nx, ny] == 0:
+                                dx, dy = d
+                                self.descent_go_back_done = False
+                                print(f"DESCENT: TRY NEW DIRECTION {d}")
+                                break
                 else:
-                    # No improvement after turning 90 degrees, turn 180 degrees (reverse direction)
+                    # If no valid move is found, turn 180 degrees
                     dx, dy = (-self.last_descent_move[0], -self.last_descent_move[1])
-                    self.descent_turned_90 = False
+                    self.descent_go_back_done = False
                     print("DESCENT: TURN 180")
 
         # Log the movement decision
@@ -328,29 +334,29 @@ class Agent:
 
         # Check if the robot has reached a key or chest
         if self.cell_val == 1:
-            print("DESCENT: SUCCESS!")
+            print("DESCENT: SUCCESS! Object found.")
             # Reset descent state after success
             self.descent_count = 0
             self.in_descent = False
             self.descent_cooldown = 20
             self.descent_pos = []
-            dx, dy = 0, 0  # Stop moving
-        else:
-            # Handle failure cases or continue the descent
-            if self.descent_count > 50:
-                # Descent failed after too many attempts
-                print("DESCENT: FAILED!")
-                self.descent_count = 0
-                self.in_descent = False
-                self.descent_cooldown = 20
-                self.descent_pos = []
-                dx, dy = 0, 0  # Stop moving
-            else:
-                # Increment descent attempt counter
-                self.descent_count += 1
+            return 0, 0  # Stop moving
+
+        # Handle failure cases or continue the descent
+        if self.descent_count > 50:
+            # Descent failed after too many attempts
+            print("DESCENT: FAILED!")
+            self.descent_count = 0
+            self.in_descent = False
+            self.descent_cooldown = 20
+            self.descent_pos = []
+            return 0, 0  # Stop moving
+
+        # Increment descent attempt counter
+        self.descent_count += 1
 
         # Return the movement decision
-        return (dx, dy)
+        return dx, dy
 
     
     def move_to(self, obj_type):

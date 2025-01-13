@@ -1,7 +1,7 @@
 import pygame
 import os
 from my_constants import *
-
+import numpy as np
 img_folder = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resources", "img")
 
 
@@ -38,6 +38,10 @@ class GUI:
         agent_img = pygame.image.load(img_folder + "/robot.png")
         agent_img = pygame.transform.scale(agent_img, (self.cell_size, self.cell_size))
         self.agents = [agent_img.copy() for _ in range(self.game.nb_agents)]
+        # obstacle_img
+        obstacle_img = pygame.image.load(img_folder + "/obstacle.png")
+        obstacle_img = pygame.transform.scale(obstacle_img, (self.cell_size, self.cell_size))
+        self.obstacles = [obstacle_img.copy() for _ in range(self.game.nb_obstacles)]
 
     def on_event(self, event):
         if event.type == pygame.QUIT:
@@ -51,16 +55,13 @@ class GUI:
         pygame.quit()
 
     def render(self):
-        try:
-            self.on_init()
-            while self.running:
-                for event in pygame.event.get():
-                    self.on_event(event)
-                self.draw()
-                self.clock.tick(self.fps)
-            self.on_cleanup()
-        except Exception:
-            pass
+        self.on_init()
+        while self.running:
+            for event in pygame.event.get():
+                self.on_event(event)
+            self.draw()
+            self.clock.tick(self.fps)
+        self.on_cleanup()
 
     def draw(self):
         self.screen.fill(BG_COLOR)
@@ -90,6 +91,7 @@ class GUI:
                               self.cell_size, self.cell_size), width=3)
             self.screen.blit(self.boxes[i], self.boxes[i].get_rect(
                 topleft=(self.game.boxes[i].x * self.cell_size, self.game.boxes[i].y * self.cell_size)))
+            
 
             # agents
             self.screen.blit(self.agents[i], self.agents[i].get_rect(
@@ -98,5 +100,31 @@ class GUI:
             self.screen.blit(self.text_agents[i], self.text_agents[i].get_rect(
                 center=(self.game.agents[i].x * self.cell_size + self.cell_size - self.text_agents[i].get_width() // 2,
                         self.game.agents[i].y * self.cell_size + self.cell_size - self.text_agents[i].get_height() // 2)))
+        # obstacles
+        poss = [(0, 0), (0, 1), (0, 2), (1, 2), (2, 2)]
 
+        
+
+        for i in range(self.game.nb_obstacles):
+
+            if self.game.obstacles[i].angle == 90:
+                poss = [(-dy, dx) for dx, dy in poss]
+            elif self.game.obstacles[i].angle == 180:
+                # Rotate 180 degrees: (-dx, -dy)
+                poss = [(-dy, -dx) for dx, dy in poss]
+            elif self.game.obstacles[i].angle == 270:
+                # Rotate 270 degrees: (dy, -dx)
+                poss = [(dy, -dx) for dx, dy in poss]
+        
+            for pos in poss:
+                dx,dy = pos
+                
+                x = self.game.obstacles[i].x + dx
+                y = self.game.obstacles[i].y + dy
+            
+                pygame.draw.rect(self.screen, self.game.obstacles[i].color,
+                                (x * self.cell_size, y * self.cell_size,
+                                self.cell_size, self.cell_size), width=3)
+                self.screen.blit(self.obstacles[i], self.obstacles[i].get_rect(
+                    topleft=(x* self.cell_size, y * self.cell_size)))
         pygame.display.update()

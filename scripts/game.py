@@ -15,29 +15,35 @@ from time import sleep
 
 class Game:
     """ Handle the whole game """
-    def __init__(self, nb_agents, map_id):
+    def __init__(self, nb_agents, map_id, nb_obstacles):
         self.nb_agents = nb_agents
+        self.nb_obstacles = nb_obstacles
         self.nb_ready = 0
         self.agent_id = 0
         self.moves = [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (1, -1), (-1, 1), (1, 1)]
         self.agent_paths = [None]*nb_agents
-        self.load_map(map_id)
+        self.load_map(map_id, nb_obstacles)
         self.gui = GUI(self)
         
 
     
-    def load_map(self, map_id):
+    def load_map(self, map_id, nb_obstacles):
         """ Load a map """
         json_filename = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "resources", "config.json")
         with open(json_filename, "r") as json_file:
             self.map_cfg = json.load(json_file)[f"map_{map_id}"]        
         
-        self.agents, self.keys, self.boxes = [], [], []
+        self.agents, self.keys, self.boxes, self.obstacles = [], [], [], []
         for i in range(self.nb_agents):
             self.agents.append(Agent(i+1, self.map_cfg[f"agent_{i+1}"]["x"], self.map_cfg[f"agent_{i+1}"]["y"], self.map_cfg[f"agent_{i+1}"]["color"]))
             self.keys.append(Key(self.map_cfg[f"key_{i+1}"]["x"], self.map_cfg[f"key_{i+1}"]["y"]))
             self.boxes.append(Box(self.map_cfg[f"box_{i+1}"]["x"], self.map_cfg[f"box_{i+1}"]["y"]))
             self.agent_paths[i] = [(self.agents[i].x, self.agents[i].y)]
+        
+        for i in range(nb_obstacles):
+            self.obstacles.append(Obstacle(self.map_cfg[f"obstacle_{i+1}"]["x"],\
+                                            self.map_cfg[f"obstacle_{i+1}"]["y"], self.map_cfg[f"obstacle_{i+1}"]["angle"]))
+
         
         self.map_w, self.map_h = self.map_cfg["width"], self.map_cfg["height"]
         self.map_real = np.zeros(shape=(self.map_h, self.map_w))
@@ -52,6 +58,32 @@ class Game:
                         self.add_val(item.x + dx, item.y + dy, item.neighbour_percent/(i+1))
                     else:
                         self.add_val(item.x, item.y, 1)
+        
+        items = self.obstacles
+        offsets = [ [(0, 0), (0, 1), (0, 2), (1, 2), (2, 2)]\
+                     ,[(-1, -1), (-1, 0), (-1, 1), (-1, 2), (-1, 3), (0, -1), (0, 3), (1, -1),  (1, 0), (1, 1), (1, 3), (2, 1), (2, 3), (3, 1), (3, 2), (3, 3)]]
+        
+        for item in items:
+
+            if item.angle == 90:
+                offsets = [[(-dy, dx) for dx, dy in offsets[0]],[(-dy, dx) for dx, dy in offsets[1]]]
+            elif item.angle == 180:
+                # Rotate 180 degrees: (-dx, -dy)
+                offsets = [[(-dy, -dx) for dx, dy in offsets[0]],[(-dy, -dx) for dx, dy in offsets[1]]]
+            elif item.angle == 270:
+                # Rotate 270 degrees: (dy, -dx)
+                offsets = [[(dy, -dx) for dx, dy in offsets[0]],[(dy, -dx) for dx, dy in offsets[1]]]
+
+
+            for i, sub_list in enumerate(offsets):
+                for pos in sub_list:
+                    if i==0:
+                        dx,dy = pos
+                        self.add_val(item.x + dx, item.y + dy, 1)
+                    else:
+                        dx,dy = pos
+                        self.add_val(item.x + dx, item.y + dy, item.neighbour_percent)
+
 
     
     def add_val(self, x, y, val):
@@ -128,3 +160,9 @@ class Key(Item):
 class Box(Item):
     def __init__(self, x, y):
         Item.__init__(self, x, y, BOX_NEIGHBOUR_PERCENTAGE, "box")
+
+class Obstacle(Item):
+    def __init__(self, x, y, angle):
+        self.angle = angle
+        self.color = BLACK
+        Item.__init__(self, x, y, OBSTACLE_NEIGHBOUR_PERCENTAGE, "obstacle")

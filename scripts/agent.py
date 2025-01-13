@@ -30,6 +30,7 @@ class Agent:
 
 
         self.robots_map = {}
+        self.walked_map = []
 
         #DO NOT TOUCH THE FOLLOWING INSTRUCTIONS
         self.network = Network(server_ip=server_ip)
@@ -51,6 +52,7 @@ class Agent:
         self.cell_owner = -1
         self.cell_type = -1
         self.known_map = np.zeros((self.w, self.h))
+        self.obstacle_map = np.zeros((self.w, self.h))
         self.key_map = []
         self.box_map = []
 
@@ -62,6 +64,10 @@ class Agent:
         self.descent_count = 0
         self.descent_turned_90 = False
         self.descent_go_back_done = False
+
+        self.last_move = (0, 0)
+        self.go_back = False
+
     
     
     def msg_cb(self): 
@@ -75,7 +81,7 @@ class Agent:
                 self.x, self.y = msg["x"], msg["y"]
                 self.cell_val = msg["cell_val"]
                 self.known_map[self.x,self.y] = 1.0
-                print(f"Agent bouge a la position: ({self.x}, {self.y})")
+                print(f"    SERVER: MOVE TO ({self.x}, {self.y})")
                 
             elif msg["header"] == GET_NB_AGENTS:
                 self.nb_agents_expected = msg["nb_agents"]
@@ -85,13 +91,13 @@ class Agent:
                 self.nb_agents_connected = msg["nb_connected_agents"]
                 
             elif msg["header"] == GET_DATA:
-                print(f"Valeur de cellule recu: {msg['cell_val']}")
+                print(f"    SERVER: CELL RECEIVED {msg['cell_val']}")
             
             elif msg["header"] == GET_ITEM_OWNER:
                 self.cell_owner = msg['owner']
                 self.cell_type = msg['type']
                 type_obj = "Cle" if msg['type'] == KEY_TYPE else "Box"
-                print(f"Valeur de cellule recu: {msg['owner']} , " + type_obj)
+                print(f"    SERVER: CELL RECEIVED {msg['owner']} , " + type_obj)
             
                 
             # Handle item discovery
@@ -109,6 +115,8 @@ class Agent:
                 elif msg["Msg type"] == POSITION:
                     self.robots_map[msg["owner"]] = msg["position"]
                     self.update_map_portion(msg["position"])
+                    if not msg["position"] in self.walked_map:
+                        self.walked_map.append(msg["position"])
 
                     
             
@@ -217,7 +225,7 @@ class Agent:
         """
         while True:
             # Compute the next move based on the current state
-            x, y = self.compute_move()
+            dx, dy = self.compute_move()
 
             # Check for potential collisions with other robots
             for key, (robot_x, robot_y) in self.robots_map.items():
@@ -226,16 +234,27 @@ class Agent:
                     continue  # Skip this iteration and avoid moving
 
             # Move to the newly computed position
-            self.move(x, y)
+            self.move(dx, dy)
+
+            if not (self.x,self.y) in self.walked_map:
+                self.walked_map.append((self.x,self.y))
 
             # Broadcast the new position to other robots
-            self.broadcast_new_pos(x, y)
+            self.broadcast_new_pos(self.x, self.y)
 
             # Update the portion of the map based on the new position
             self.update_map_portion((self.x, self.y))
 
             # Pause briefly to ensure asynchronous callbacks (if any) are processed
             sleep(0.2)
+
+            self.last_move = (dx, dy)
+
+            if self.cell_val == 0.35:
+                self.obstacle_map[int(self.x),int(self.y)] = 1
+                self.go_back = True
+            else:
+                self.go_back = False
 
             # Check the current cell value for special objects
             if self.cell_val == 1:  # Indicates a key or chest is present
@@ -263,8 +282,9 @@ class Agent:
                 print("GOT OBJECT")  # Debug message indicating object interaction
 
                 # Check if both key and box have been found
-                if self.key_found and self.box_found:
+                if self.key_found and self.box_found and self.explore_finished:
                     print("FINISHED !!!!")  # Task completed
+                    print(f"{len(self.walked_map)} EXPLORED IN TOTAL !!!!")
                     return  # Exit the loop
 
 
@@ -274,8 +294,12 @@ class Agent:
         Handles the descent process, adjusting the robot's movement based on the current and previous cell values.
         The function uses a heuristic to decide whether to continue, backtrack, turn, or stop descent based on progress.
         """
-        # Record the current position and cell value in the descent history
+
         self.descent_pos.append((self.x, self.y, self.cell_val))
+        directions = [
+            (-1, 0), (1, 0), (0, -1), (0, 1),  
+            (-1, -1), (-1, 1), (1, -1), (1, 1)  
+        ]
 
         # Determine movement based on the progress in the descent
         if self.descent_pos[-1][2] > self.descent_pos[-2][2]:
@@ -283,23 +307,25 @@ class Agent:
             dx, dy = self.last_descent_move
             print("DESCENT: CONTINUE")
         else:
+            # No progress detected, decide on a new move
             if not self.descent_go_back_done:
-                # No improvement and haven't gone back yet, so backtrack
                 dx, dy = (-self.last_descent_move[0], -self.last_descent_move[1])
                 self.descent_go_back_done = True
                 print("DESCENT: GO BACK")
             else:
-                if not self.descent_turned_90:
-                    # No improvement after backtracking, turn 90 degrees
-                    heading = np.arctan2(self.last_descent_move[1], self.last_descent_move[0]) + np.radians(90)
-                    dx, dy = int(np.round(np.cos(heading))), int(np.round(np.sin(heading)))
-                    self.descent_turned_90 = True
-                    self.descent_go_back_done = False
-                    print("DESCENT: TURN 90")
+                for d in directions:
+                    nx, ny = self.x + d[0], self.y + d[1]
+                    if 0 <= nx < self.w and 0 <= ny < self.h:
+                        if (nx, ny) not in [pos[:2] for pos in self.descent_pos]:
+                            if self.obstacle_map[nx, ny] == 0:
+                                dx, dy = d
+                                self.descent_go_back_done = False
+                                print(f"DESCENT: TRY NEW DIRECTION {d}")
+                                break
                 else:
-                    # No improvement after turning 90 degrees, turn 180 degrees (reverse direction)
+                    # If no valid move is found, turn 180 degrees
                     dx, dy = (-self.last_descent_move[0], -self.last_descent_move[1])
-                    self.descent_turned_90 = False
+                    self.descent_go_back_done = False
                     print("DESCENT: TURN 180")
 
         # Log the movement decision
@@ -308,29 +334,29 @@ class Agent:
 
         # Check if the robot has reached a key or chest
         if self.cell_val == 1:
-            print("DESCENT: SUCCESS!")
+            print("DESCENT: SUCCESS! Object found.")
             # Reset descent state after success
             self.descent_count = 0
             self.in_descent = False
-            self.descent_cooldown = 5
+            self.descent_cooldown = 20
             self.descent_pos = []
-            dx, dy = 0, 0  # Stop moving
-        else:
-            # Handle failure cases or continue the descent
-            if self.descent_count > 20:
-                # Descent failed after too many attempts
-                print("DESCENT: FAILED!")
-                self.descent_count = 0
-                self.in_descent = False
-                self.descent_cooldown = 5
-                self.descent_pos = []
-                dx, dy = 0, 0  # Stop moving
-            else:
-                # Increment descent attempt counter
-                self.descent_count += 1
+            return 0, 0  # Stop moving
+
+        # Handle failure cases or continue the descent
+        if self.descent_count > 50:
+            # Descent failed after too many attempts
+            print("DESCENT: FAILED!")
+            self.descent_count = 0
+            self.in_descent = False
+            self.descent_cooldown = 20
+            self.descent_pos = []
+            return 0, 0  # Stop moving
+
+        # Increment descent attempt counter
+        self.descent_count += 1
 
         # Return the movement decision
-        return (dx, dy)
+        return dx, dy
 
     
     def move_to(self, obj_type):
@@ -375,9 +401,21 @@ class Agent:
         # Calculate the vector to the target object's position
         offset_x, offset_y = obj_pos[0] - self.x, obj_pos[1] - self.y
 
-        # Compute the heading (angle) towards the object and normalize it to a unit vector
-        heading = np.arctan2(offset_y, offset_x)
-        x, y = round(np.cos(heading)), round(np.sin(heading))  # Convert heading to discrete movement
+        first_loop = True
+        heading_offset = 0
+        x,y = 0,0
+        while self.obstacle_map[int(self.x+x),int(self.y+y)] == 1 or first_loop: # avoid obstacle
+
+            # Compute the heading (angle) towards the object and normalize it to a unit vector
+            if not first_loop:
+                heading_offset += np.pi/90
+            
+            heading = np.arctan2(offset_y, offset_x) + heading_offset
+            x, y = round(np.cos(heading)), round(np.sin(heading))  # Convert heading to discrete movement
+
+            first_loop = False
+
+        
 
         return (x, y)  # Return the movement vector
 
@@ -438,9 +476,11 @@ class Agent:
         x, y = obj_pos
 
         # Define the range around the position to be marked as explored
+        EXPLORED_AREA = 2  # Variable defining the explored radius
+
         self.map_portion[
-            max(0, x - 2):min(self.map_portion.shape[0], x + 3),
-            max(0, y - 2):min(self.map_portion.shape[1], y + 3)
+            max(0, x - EXPLORED_AREA):min(self.map_portion.shape[0], x + EXPLORED_AREA + 1),
+            max(0, y - EXPLORED_AREA):min(self.map_portion.shape[1], y + EXPLORED_AREA + 1)
         ] = 0  # Mark the region as explored (value = 0)
 
 
@@ -462,12 +502,24 @@ class Agent:
         # Iterate through the map to find the closest unexplored pixel
         for i in range(self.w):  # Loop through map width
             for j in range(self.h):  # Loop through map height
-                if self.map_portion[i, j] == 1:  # Check if the pixel is unexplored
+                if self.map_portion[i, j] == 1 :  # Check if the pixel is unexplored and not obstacle
                     # Calculate the Euclidean distance to the unexplored pixel
                     distance = np.sqrt((i - self.x) ** 2 + (j - self.y) ** 2)
+                    # calculate custom distance to favor diagonal
+                    #distance = min(abs(i - self.x), abs(j - self.y)) + 2 * abs(abs(i - self.x) - abs(j - self.y))
                     if distance < nearest_distance:  # Update if a closer pixel is found
-                        nearest_distance = distance
-                        best_move = (i - self.x, j - self.y)  # Store the relative move
+                        
+                        dx, dy = i - self.x, j - self.y  # Store the relative move
+                        
+                        # Normalize the move to a step of 1 in x and y directions
+                        x = int(dx / abs(dx)) if dx != 0 else 0
+                        y = int(dy / abs(dy)) if dy != 0 else 0
+
+                        if self.obstacle_map[int(self.x+x),int(self.y+y)] == 0: # avoid obstacle
+                            nearest_distance = distance
+                            best_move = x,y
+
+                        
 
         # Determine the direction to move towards the nearest unexplored pixel
         if best_move:
@@ -481,8 +533,9 @@ class Agent:
             print("EXPLORE: NO UNEXPLORED PIXELS")
             self.explore_finished = True
 
+
         # Handle descent phase
-        if self.cell_val != 0 and self.descent_cooldown <= 0:  # Condition to enter descent
+        if self.cell_val != 0 and self.descent_cooldown <= 0 and not self.object_near_taken():  # Condition to enter descent
             self.in_descent = True  # Enable descent mode
             # Record the starting position and cell value for descent
             self.descent_pos.append((self.x, self.y, self.cell_val))
@@ -491,6 +544,7 @@ class Agent:
         else:
             # Decrement descent cooldown if not entering descent
             self.descent_cooldown -= 1
+        
 
         return (x, y)  # Return the computed move direction
 
@@ -501,6 +555,10 @@ class Agent:
         Computes the next move for the agent based on its current state.
         :return: Coordinates (x, y) for the next move.
         """
+        if self.go_back:
+            dx,dy = self.last_move
+            return (-dx,-dy)
+        
         if self.in_descent:
             return self.do_descent()
         else:
@@ -512,6 +570,38 @@ class Agent:
                 else:
                     return self.move_to(BOX_TYPE)
 
+    def object_near_taken(self):
+        # Define the 8 neighboring relative positions
+        first_order_neighbors = [
+            (-1, -1), (-1, 0), (-1, 1),  # Upper row neighbors
+            (0, -1),   (0, 0),  (0, 1),   # Side neighbors
+            (1, -1), (1, 0), (1, 1)     # Lower row neighbors
+        ]
+        # Define the second-order neighboring relative positions
+        second_order_neighbors = [
+            (-2, -2), (-2, -1), (-2, 0), (-2, 1), (-2, 2),  # 2nd row above
+            (-1, -2), (-1, 2), (0, -2), (0, 2), (1, -2), (1, 2),  # Horizontal and vertical extensions
+            (2, -2), (2, -1), (2, 0), (2, 1), (2, 2)  # 2nd row below
+        ]
+        third_order_neighbors = [
+            (-3, -3), (-3, -2), (-3, -1), (-3, 0), (-3, 1), (-3, 2), (-3, 3),
+            (-2, -3), (-2, 3), (-1, -3), (-1, 3), (0, -3), (0, 3), (1, -3), (1, 3),
+            (2, -3), (2, 3), (3, -3), (3, -2), (3, -1), (3, 0), (3, 1), (3, 2), (3, 3)
+        ]
+
+        # Combine both first-order and second-order neighbors
+        all_neighbors = first_order_neighbors + second_order_neighbors + third_order_neighbors
+
+        # Extract positions from key_map and box_map
+        all_positions = [entry["position"] for entry in self.key_map + self.box_map]
+
+        # Check if (self.x, self.y) is a neighbor of any position in the maps
+        for pos_x, pos_y in all_positions:
+            for dx, dy in all_neighbors:
+                if (self.x, self.y) == (pos_x + dx, pos_y + dy):
+                    return True
+
+        return False
 
 
 
